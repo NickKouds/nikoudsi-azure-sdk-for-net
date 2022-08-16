@@ -17,13 +17,14 @@
     using Protocol = Microsoft.Azure.Batch.Protocol;
     using Xunit;
     using Xunit.Abstractions;
+    using System.Data;
 
     [Collection("SharedPoolCollection")]
     public class CloudJobIntegrationTests
     {
         private readonly ITestOutputHelper testOutputHelper;
         private readonly PoolFixture poolFixture;
-        private static readonly TimeSpan TestTimeout = TimeSpan.FromMinutes(3);
+        private static readonly TimeSpan TestTimeout = TimeSpan.FromMinutes(25);
 
         public CloudJobIntegrationTests(ITestOutputHelper testOutputHelper, PaasWindowsPoolFixture poolFixture)
         {
@@ -537,6 +538,94 @@
             }
 
             SynchronizationContextHelper.RunTest(test, TestTimeout);
+        }
+
+        [Fact]
+        [LiveTest]
+        [Trait(TestTraits.Duration.TraitName, TestTraits.Duration.Values.LongDuration)]
+        public void JobStressTest()
+        {
+            void test()
+            {
+                var numJobs = 250;
+                using BatchClient batchCli = TestUtilities.OpenBatchClient(TestUtilities.GetCredentialsFromEnvironment(), addDefaultRetryPolicy: false);
+                string jobIdPrefix = "StressTestJob-" + TestUtilities.GetMyName();
+                IEnumerable<string> jobIds;
+                ODATADetailLevel detail = new ODATADetailLevel(selectClause: "id");
+                try
+                {
+                    testOutputHelper.WriteLine("Inside test method");
+                    Console.WriteLine("Inside test method");
+                    //deleteLeftOverJobs(batchCli, jobIds);
+                    testOutputHelper.WriteLine($"Adding {numJobs} jobs");
+                    //var tasks = new List<Task>();
+                    for (var i = 0; i < numJobs; i++)
+                    {
+                        try
+                        {
+                            CloudJob unboundJob = batchCli.JobOperations.CreateJob(jobIdPrefix + "-" + i, new PoolInformation());
+                            unboundJob.PoolInformation.PoolId = this.poolFixture.PoolId;
+                            //tasks.Add(unboundJob.CommitAsync());
+                            unboundJob.Commit();
+                        }
+                        catch (System.AggregateException ae)
+                        {
+                            foreach(var exception in ae.InnerExceptions)
+                            {
+                                testOutputHelper.WriteLine($"Encounted exception for {i} while creating job");
+                                testOutputHelper.WriteLine($"Message: {exception.Message}");
+                                testOutputHelper.WriteLine($"Stacktrace: {exception.StackTrace}");
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            testOutputHelper.WriteLine($"Encounted Generic exception for {i} while creating job");
+                            testOutputHelper.WriteLine($"Exception message: {e.Message}");
+                            testOutputHelper.WriteLine($"Exception stack trace: {e.StackTrace}");
+                            continue;
+                        }
+                        }
+                        
+                    //testOutputHelper.WriteLine("Finished making add calls. Awaiting job creation...");
+                    //Task.WaitAll(tasks.ToArray());
+                    testOutputHelper.WriteLine("Done adding jobs");
+                }
+                finally
+                {
+                    testOutputHelper.WriteLine("Cleaning up");
+                    jobIds = batchCli.JobOperations.ListJobs(detail).Select(cloudJob => cloudJob.Id);
+                    deleteLeftOverJobs(batchCli, jobIds, testOutputHelper);
+                    //var tasks = new List<Task>();
+                    //for (var i = 0; i < numJobs; i++)
+                    //{
+                    //    TestUtilities.DeleteJobIfExistsAsync(batchCli, jobIdPrefix + "-" + i).Wait();
+                    //    //tasks.Add(TestUtilities.DeleteJobIfExistsAsync(batchCli, jobIdPrefix + "-" + i));
+                    //}
+                    //testOutputHelper.WriteLine("Waiting on deletes...");
+                    //Task.WaitAll(tasks.ToArray());
+                    testOutputHelper.WriteLine("Done cleaning up");
+                }
+            }
+            SynchronizationContextHelper.RunTest(test, TestTimeout);
+        }
+
+        private void deleteLeftOverJobs(BatchClient batchClient, IEnumerable<string> jobIds, ITestOutputHelper testOutputHelper)
+        {
+            foreach (var jobId in jobIds)
+            {
+                try
+                {
+                    TestUtilities.DeleteJobIfExistsAsync(batchClient, jobId).Wait();
+                }
+                catch (System.AggregateException ae)
+                {
+                    if (ae.InnerException.GetType() == typeof(System.Threading.Tasks.TaskCanceledException))
+                    {
+                        testOutputHelper.WriteLine($"Encountered Task Canceled Exception for {jobId}");
+                        continue;
+                    }
+                }
+            }
         }
 
         #region Test helpers

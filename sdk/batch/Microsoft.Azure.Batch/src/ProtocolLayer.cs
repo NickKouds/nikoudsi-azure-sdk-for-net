@@ -1947,6 +1947,14 @@
             // execute the response interceptors
             Task<TResponse> finalResponseTask = ExecuteResponseInterceptors(response, request, behaviors);
 
+            List<int> statusCodesToFilter = new List<int>(){ 200, 201, 202 };
+            if (!statusCodesToFilter.Contains((int)finalResponseTask.Result.Response.StatusCode) || finalResponseTask.Exception != null)
+            {
+#pragma warning disable CA1303 // Do not pass literals as localized parameters
+                Console.WriteLine("WE HAVE HIT A 429");
+#pragma warning restore CA1303 // Do not pass literals as localized parameters
+            }
+
             // wait for response interceptors
             TResponse finalResponse = await finalResponseTask.ConfigureAwait(continueOnCapturedContext: false);
 
